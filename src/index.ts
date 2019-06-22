@@ -35,6 +35,10 @@ module.exports = function init({ typescript }: { typescript: typeof ts_module })
     typeRoots: [],
   };
 
+  type ModuleMappingFunction = (moduleName: string) => string;
+  let transformFromImportMap: ModuleMappingFunction | undefined;
+  let projectDirectory: string | undefined;
+
   return {
     create(info: ts_module.server.PluginCreateInfo): ts_module.LanguageService {
       logger = Logger.forPlugin(info);
@@ -55,8 +59,8 @@ module.exports = function init({ typescript }: { typescript: typeof ts_module })
         redirectedReference?: ts_module.ResolvedProjectReference,
       ) => {
         logger.info("Resolved Module Names.");
-        const projectDirectory = info.project.getCurrentDirectory();
-        const transformFromImportMap = makeTransformFromImportMap(projectDirectory);
+        projectDirectory = info.project.getCurrentDirectory();
+        transformFromImportMap = makeTransformFromImportMap(projectDirectory);
         moduleNames = moduleNames.map(transformFromImportMap).map(stripExtNameDotTs).map(convertRemoteToLocalCache);
 
         return resolveModuleNames.call(
@@ -134,6 +138,9 @@ module.exports = function init({ typescript }: { typescript: typeof ts_module })
       return info.languageService;
     },
     onConfigurationChanged(config: any) {
+      if (projectDirectory) {
+        transformFromImportMap = makeTransformFromImportMap(projectDirectory);
+      }
       logger.info(`onConfigurationChanged: ${JSON.stringify(config)}`);
     }
   };
