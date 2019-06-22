@@ -1,3 +1,5 @@
+import { CompilerOptions } from "typescript/lib/tsserverlibrary";
+
 export function getDenoDir(): string {
   // ref https://deno.land/manual.html
   // On Linux/Redox: $XDG_CACHE_HOME/deno or $HOME/.cache/deno
@@ -22,4 +24,17 @@ export function getDenoDir(): string {
   }
 
   return denoDir;
+}
+
+export interface IDenoTypeScriptConfig extends CompilerOptions {
+  [key: string]: any;
+  denoOptions?: {
+    importMap?: string;
+  };
+}
+
+export interface IImportMap {
+  imports: {
+    [key: string]: string;
+  };
 }

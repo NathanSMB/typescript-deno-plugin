@@ -7,16 +7,18 @@ import mockRequire from "mock-require";
 import ts_module from "typescript/lib/tsserverlibrary";
 
 import { Logger } from "./logger";
-import { getDenoDir } from "./shared";
+import { getDenoDir, IDenoTypeScriptConfig, IImportMap } from "./shared";
 
 let logger: Logger;
+
+const importMapCache = new Map<string, IImportMap>();
 
 module.exports = function init({ typescript }: { typescript: typeof ts_module }) {
   // Make sure Deno imports the correct version of TS
   mockRequire("typescript", typescript);
 
   // see https://github.com/denoland/deno/blob/2debbdacb935cfe1eb7bb8d1f40a5063b339d90b/js/compiler.ts#L159-L170
-  const OPTIONS: ts_module.CompilerOptions = {
+  const OPTIONS: IDenoTypeScriptConfig = {
     allowJs: true,
     checkJs: true,
     esModuleInterop: true,
@@ -44,13 +46,18 @@ module.exports = function init({ typescript }: { typescript: typeof ts_module })
         return info.languageService;
       }
 
+      const getCompilationSettingsFunction = info.languageServiceHost.getCompilationSettings;
+      const getCompilationSettings = () => getCompilationSettingsFunction.call(info.languageServiceHost);
+
       info.languageServiceHost.resolveModuleNames = (
         moduleNames: string[],
         containingFile: string,
         reusedNames?: string[],
         redirectedReference?: ts_module.ResolvedProjectReference,
       ) => {
-        moduleNames = moduleNames.map(stripExtNameDotTs).map(convertRemoteToLocalCache);
+        const tsconfig: IDenoTypeScriptConfig = getCompilationSettings();
+        const transformFromImportMap = makeTransformFromImportMap(tsconfig);
+        moduleNames = moduleNames.map(transformFromImportMap).map(stripExtNameDotTs).map(convertRemoteToLocalCache);
 
         return resolveModuleNames.call(
           info.languageServiceHost,
@@ -61,10 +68,8 @@ module.exports = function init({ typescript }: { typescript: typeof ts_module })
         );
       };
 
-      const getCompilationSettings = info.languageServiceHost.getCompilationSettings;
-
       info.languageServiceHost.getCompilationSettings = () => {
-        const projectConfig = getCompilationSettings.call(info.languageServiceHost);
+        const projectConfig = getCompilationSettings();
         const compilationSettings = merge(OPTIONS, projectConfig);
         logger.info(`compilationSettings:${JSON.stringify(compilationSettings)}`);
         return compilationSettings;
@@ -133,6 +138,48 @@ module.exports = function init({ typescript }: { typescript: typeof ts_module })
     },
   };
 };
+
+function getImportMap(filePath: string) {
+  const fileStats = fs.statSync(filePath);
+  const cacheKey = `${filePath}-${fileStats.mtimeMs}`;
+
+  const isCached = importMapCache.has(cacheKey);
+
+  let workingImportMap: IImportMap | undefined;
+  if (!isCached) {
+    const importMapFile = fs.readFileSync(filePath, { encoding: "utf8" });
+    workingImportMap = JSON.parse(importMapFile) as IImportMap;
+    importMapCache.set(cacheKey, workingImportMap);
+  } else {
+    workingImportMap = importMapCache.get(cacheKey) as IImportMap;
+  }
+
+  return workingImportMap;
+}
+
+function makeTransformFromImportMap(tsconfig: IDenoTypeScriptConfig) {
+  const noFilterReturn = (moduleName: string) => moduleName;
+  const denoOptions = tsconfig.denoOptions;
+
+  if (denoOptions && denoOptions.importMap) {
+    const importMap = getImportMap(denoOptions.importMap);
+    return (moduleName: string) => {
+      const imports = importMap.imports;
+      const importKeys = Object.keys(imports);
+      for (const key of importKeys) {
+        if (moduleName.startsWith(key)) {
+          const strippedModuleName = moduleName.substring(key.length);
+          const realModuleName = imports[key] + strippedModuleName;
+
+          return realModuleName;
+        }
+      }
+      return moduleName;
+    };
+  }
+
+  return noFilterReturn;
+}
 
 function getModuleWithQueryString(moduleName: string): string | undefined {
   let name = moduleName;
