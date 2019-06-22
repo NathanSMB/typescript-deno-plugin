@@ -13,7 +13,7 @@ node_modules
 .env.test
 
 # Intermediary compilation files
-out
+# out
 
 # VS Code
 .vscode/*
